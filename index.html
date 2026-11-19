@@ -6,227 +6,119 @@
     <title>Живой конспект</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background-color: var(--tg-theme-bg-color, #18222d);
-            color: var(--tg-theme-text-color, #ffffff);
-            margin: 0;
-            padding: 16px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            height: 100vh;
-            box-sizing: border-box;
-        }
-        video {
-            width: 100%;
-            max-width: 420px;
-            border-radius: 14px;
-            background: #000;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-            aspect-ratio: 4/3;
-            object-fit: cover;
-        }
-        .controls {
-            margin-top: 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            width: 100%;
-            max-width: 420px;
-            z-index: 10;
-        }
-        button {
-            padding: 16px;
-            font-size: 16px;
-            font-weight: 600;
-            border: none;
-            border-radius: 12px;
-            cursor: pointer;
-            background-color: #2ea6ff;
-            color: #ffffff;
-            touch-action: manipulation;
-            -webkit-tap-highlight-color: transparent;
-        }
-        button:active {
-            transform: scale(0.98);
-            opacity: 0.9;
-        }
-        button.recording {
-            background-color: #ff3b30;
-        }
-        .status {
-            margin-top: 14px;
-            font-size: 14px;
-            text-align: center;
-            opacity: 0.9;
-            line-height: 1.4;
-            padding: 0 10px;
-        }
+        body { font-family: sans-serif; background: #18222d; color: #fff; margin: 0; padding: 16px; display: flex; flex-direction: column; align-items: center; height: 100vh; box-sizing: border-box; }
+        video { width: 100%; max-width: 420px; border-radius: 14px; background: #000; aspect-ratio: 4/3; object-fit: cover; }
+        button { width: 100%; max-width: 420px; margin-top: 20px; padding: 16px; font-size: 16px; font-weight: 600; border: none; border-radius: 12px; background: #2ea6ff; color: #fff; }
+        button.recording { background: #ff3b30; }
+        .status { margin-top: 14px; font-size: 14px; text-align: center; line-height: 1.4; word-break: break-word; }
     </style>
 </head>
 <body>
     <video id="preview" autoplay playsinline muted></video>
     <canvas id="canvas" style="display:none;"></canvas>
-
-    <div class="controls">
-        <button id="toggleBtn" type="button">🔴 Начать запись конспекта</button>
-    </div>
-    <div class="status" id="statusText">Готов к работе. Нажми кнопку выше.</div>
+    <button id="toggleBtn" type="button">🔴 Начать запись конспекта</button>
+    <div class="status" id="statusText">Готов к работе. Нажми кнопку.</div>
 
     <script>
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbz3psFCWDgyNYfHJp-Qxp9wbg4RbKSSWYkM5jg9mADM0NyGddeXKoScul04RdKemDDa_g/exec";
+        window.onerror = function(msg, url, line) {
+            document.getElementById('statusText').innerText = "Ошибка JS (строка " + line + "): " + msg;
+        };
 
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbxIiv4xpoXORC_qJ3ELOL_PJ1m0u0TOgWlhJ06f1YPy2XQBL90nbxcundZ5yO_2_FkX/exec";
         let userId = 0;
         try {
             if (window.Telegram && window.Telegram.WebApp) {
-                const tg = window.Telegram.WebApp;
-                tg.ready();
-                tg.expand();
-                userId = tg.initDataUnsafe?.user?.id || 0;
+                window.Telegram.WebApp.ready();
+                window.Telegram.WebApp.expand();
+                userId = window.Telegram.WebApp.initDataUnsafe?.user?.id || 0;
             }
         } catch (e) {}
 
-        let stream = null;
-        let mediaRecorder = null;
-        let isRecording = false;
-        let intervalId = null;
-        let wakeLock = null;
-        let chunksCount = 0;
-
+        let stream = null, mediaRecorder = null, isRecording = false, intervalId = null, chunksCount = 0;
         const video = document.getElementById('preview');
         const canvas = document.getElementById('canvas');
         const btn = document.getElementById('toggleBtn');
         const statusText = document.getElementById('statusText');
 
-        btn.addEventListener('click', async () => {
+        btn.onclick = async function() {
+            statusText.innerText = "Клик сработал! Включаю камеру...";
             if (!isRecording) {
-                await startRecording();
-            } else {
-                stopRecording();
-            }
-        });
-
-        async function requestWakeLock() {
-            try {
-                if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
-            } catch (e) {}
-        }
-
-        async function sendToGas(payloadObj) {
-            const response = await fetch(GAS_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                body: JSON.stringify(payloadObj)
-            });
-            return await response.json();
-        }
-
-        async function startRecording() {
-            try {
-                statusText.innerText = "Клик принят! Запрашиваю доступ к камере и микрофону...";
-                
-                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                    statusText.innerText = "Ошибка: браузер не поддерживает доступ к камере (открой через ⋮ -> Открыть в браузере).";
-                    return;
-                }
-
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: { ideal: "environment" } },
-                    audio: true
-                });
-                video.srcObject = stream;
-                await requestWakeLock();
-
-                statusText.innerText = "Камера включена! Создаю Google Документ...";
-                await sendToGas({ action: 'start_session', user_id: userId });
-
-                isRecording = true;
-                chunksCount = 0;
-                btn.innerText = "⏹ Остановить запись";
-                btn.classList.add('recording');
-                statusText.innerText = "Идет запись... Каждые 30 сек обновляю конспект в ТГ и Google Docs.";
-
-                recordNextChunk();
-                intervalId = setInterval(() => {
-                    if (mediaRecorder && mediaRecorder.state === "recording") {
-                        mediaRecorder.stop();
+                try {
+                    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                        statusText.innerText = "Этот браузер блокирует камеру. Нажми ⋮ сверху -> Открыть в браузере.";
+                        return;
                     }
-                }, 30000);
+                    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: true });
+                    video.srcObject = stream;
+                    statusText.innerText = "Камера есть! Создаю Google Документ...";
 
-            } catch (err) {
-                statusText.innerText = "Ошибка: " + err.name + " (" + err.message + ")";
+                    const res = await fetch(GAS_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                        body: JSON.stringify({ action: 'start_session', user_id: userId })
+                    });
+                    const data = await res.json();
+                    if (data.status !== "ok") throw new Error(JSON.stringify(data));
+
+                    isRecording = true;
+                    chunksCount = 0;
+                    btn.innerText = "⏹ Остановить запись";
+                    btn.classList.add('recording');
+                    statusText.innerText = "Запись идет! Каждые 30 сек обновляю конспект.";
+
+                    recordNextChunk();
+                    intervalId = setInterval(() => {
+                        if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
+                    }, 30000);
+                } catch (err) {
+                    statusText.innerText = "Сбой запуска: " + err.name + " - " + err.message;
+                }
+            } else {
+                isRecording = false;
+                clearInterval(intervalId);
+                if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
+                if (stream) stream.getTracks().forEach(t => t.stop());
+                video.srcObject = null;
+                btn.innerText = "🔴 Начать запись конспекта";
+                btn.classList.remove('recording');
+                statusText.innerText = "Запись остановлена.";
             }
-        }
+        };
 
         function recordNextChunk() {
             if (!isRecording || !stream) return;
-
-            const audioStream = new MediaStream(stream.getAudioTracks());
-            mediaRecorder = new MediaRecorder(audioStream);
-            let audioChunks = [];
-
-            mediaRecorder.ondataavailable = e => {
-                if (e.data.size > 0) audioChunks.push(e.data);
-            };
-
+            mediaRecorder = new MediaRecorder(new MediaStream(stream.getAudioTracks()));
+            let chunks = [];
+            mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
             mediaRecorder.onstop = async () => {
-                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                const audioBase64 = await blobToBase64(audioBlob);
-                const imageBase64 = captureFrameBase64();
-
-                if (isRecording) recordNextChunk();
-
-                chunksCount++;
-                const currentNum = chunksCount;
-                statusText.innerText = `Отправляю фрагмент #${currentNum} в Gemini...`;
-
-                try {
-                    await sendToGas({
-                        action: 'chunk',
-                        user_id: userId,
-                        audio: audioBase64,
-                        mime: audioBlob.type,
-                        image: imageBase64
-                    });
-                    if (isRecording) {
-                        statusText.innerText = `Фрагмент #${currentNum} добавлен в конспект! Запись продолжается...`;
-                    }
-                } catch (err) {
-                    statusText.innerText = `Ошибка отправки #${currentNum}, продолжаю запись...`;
-                }
-            };
-
-            mediaRecorder.start();
-        }
-
-        function blobToBase64(blob) {
-            return new Promise((resolve) => {
+                const blob = new Blob(chunks, { type: 'audio/webm' });
                 const reader = new FileReader();
-                reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                reader.onloadend = async () => {
+                    const audioB64 = reader.result.split(',')[1];
+                    let imgB64 = null;
+                    if (video.videoWidth) {
+                        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+                        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+                        imgB64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+                    }
+                    if (isRecording) recordNextChunk();
+                    chunksCount++;
+                    const num = chunksCount;
+                    statusText.innerText = "Отправляю фрагмент #" + num + "...";
+                    try {
+                        await fetch(GAS_URL, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                            body: JSON.stringify({ action: 'chunk', user_id: userId, audio: audioB64, mime: blob.type, image: imgB64 })
+                        });
+                        if (isRecording) statusText.innerText = "Фрагмент #" + num + " добавлен!";
+                    } catch (e) {
+                        statusText.innerText = "Ошибка сети на #" + num + ": " + e.message;
+                    }
+                };
                 reader.readAsDataURL(blob);
-            });
-        }
-
-        function captureFrameBase64() {
-            if (!video.videoWidth) return null;
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            return canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
-        }
-
-        function stopRecording() {
-            isRecording = false;
-            clearInterval(intervalId);
-            if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
-            if (stream) stream.getTracks().forEach(track => track.stop());
-            if (wakeLock) { wakeLock.release(); wakeLock = null; }
-            video.srcObject = null;
-            btn.innerText = "🔴 Начать запись конспекта";
-            btn.classList.remove('recording');
-            statusText.innerText = "Запись остановлена. Конспект сохранен в чате и на Google Диске!";
+            };
+            mediaRecorder.start();
         }
     </script>
 </body>
