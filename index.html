@@ -7,7 +7,7 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         body { font-family: sans-serif; background: #18222d; color: #fff; margin: 0; padding: 16px; display: flex; flex-direction: column; align-items: center; height: 100vh; box-sizing: border-box; }
-        video { width: 100%; max-width: 420px; border-radius: 14px; background: #000; aspect-ratio: 4/3; object-fit: cover; }
+        video { width: 100%; max-width: 420px; height: 280px; border-radius: 14px; background: #000; object-fit: cover; display: block; }
         button { width: 100%; max-width: 420px; margin-top: 20px; padding: 16px; font-size: 16px; font-weight: 600; border: none; border-radius: 12px; background: #2ea6ff; color: #fff; }
         button.recording { background: #ff3b30; }
         .status { margin-top: 14px; font-size: 14px; text-align: center; line-height: 1.4; word-break: break-word; }
@@ -48,8 +48,18 @@
                         statusText.innerText = "Этот браузер блокирует камеру. Нажми ⋮ сверху -> Открыть в браузере.";
                         return;
                     }
-                    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: true });
+                    
+                    try {
+                        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: true });
+                    } catch (camErr) {
+                        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                    }
+
                     video.srcObject = stream;
+                    video.setAttribute('playsinline', true);
+                    video.muted = true;
+                    await video.play();
+
                     statusText.innerText = "Камера есть! Создаю Google Документ...";
 
                     const res = await fetch(GAS_URL, {
